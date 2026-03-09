@@ -1,9 +1,11 @@
 {
   "name": "xerxo-os-bridge",
   "version": "1.0.0",
-  "description": "Xerxo WhatsApp Bridge",
+  "description": "Xerxo WhatsApp Bridge - Baileys-based WhatsApp connector",
   "main": "index.js",
-  "scripts": { "start": "node index.js" },
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.16",
     "@hapi/boom": "^10.0.1",
@@ -12,5 +14,7 @@
     "qrcode": "^1.5.4",
     "node-fetch": "^2.7.0"
   },
-  "engines": { "node": ">=18.0.0" }
+  "engines": {
+    "node": ">=18.0.0"
+  }
 }

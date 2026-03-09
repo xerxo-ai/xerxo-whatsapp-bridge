@@ -1,5 +1,5 @@
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const pino = require('pino');
 const QRCode = require('qrcode');
@@ -76,7 +76,10 @@ async function createSession(sessionId, type) {
 
   let sock;
   try {
+    const { version } = await fetchLatestBaileysVersion();
+    logger.info(`[${sessionId}] Using Baileys version: ${JSON.stringify(version)}`);
     sock = makeWASocket({
+      version,
       logger: pino({ level: 'warn' }),
       auth: {
         creds: state.creds,
@@ -426,3 +429,4 @@ app.listen(PORT, async () => {
   // Restore existing sessions
   await restoreSessions();
 });
+

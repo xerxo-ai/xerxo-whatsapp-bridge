@@ -20,6 +20,9 @@ const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 // ─── In-memory session store ───
 const sessions = new Map();
 
+// ─── Sent message ID tracking (prevent infinite loops) ───
+const sentMessageIds = new Set();
+
 // ─── Helper: get base URL from WEBHOOK_URL ───
 function getBackendBaseUrl() {
   if (!WEBHOOK_URL) return null;
@@ -191,6 +194,13 @@ async function createSession(sessionId, type) {
     for (const msg of messages) {
       if (!msg.message) continue;
       if (msg.key.fromMe === undefined) continue;
+
+      // Skip messages we sent ourselves (agent responses)
+      if (msg.key.id && sentMessageIds.has(msg.key.id)) {
+        logger.info(`[${sessionId}] Skipping own sent message: ${msg.key.id}`);
+        sentMessageIds.delete(msg.key.id);
+        continue;
+      }
 
       const from = msg.key.remoteJid || '';
       const fromMe = msg.key.fromMe || false;
@@ -386,7 +396,13 @@ app.post('/session/:sessionId/send', async (req, res) => {
 
   try {
     const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
-    await session.sock.sendMessage(jid, { text: message });
+    const sent = await session.sock.sendMessage(jid, { text: message });
+    // Track the sent message ID to prevent bounce-back loops
+    if (sent && sent.key && sent.key.id) {
+      sentMessageIds.add(sent.key.id);
+      // Clean up after 60 seconds
+      setTimeout(() => sentMessageIds.delete(sent.key.id), 60000);
+    }
     session.lastActivity = new Date().toISOString();
     res.json({ success: true, message: 'Message sent' });
   } catch (err) {
@@ -429,4 +445,3 @@ app.listen(PORT, async () => {
   // Restore existing sessions
   await restoreSessions();
 });
-

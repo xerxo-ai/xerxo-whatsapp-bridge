@@ -1,5 +1,3 @@
-
-
 const express = require('express');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
@@ -63,19 +61,37 @@ async function createSession(sessionId, type) {
     fs.mkdirSync(sessionDir, { recursive: true });
   }
 
-  const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+  logger.info(`[${sessionId}] Creating session, auth dir: ${sessionDir}`);
 
-  const sock = makeWASocket({
-    logger: pino({ level: 'silent' }),
-    auth: {
-      creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
-    },
-    printQRInTerminal: true,
-    browser: ['Xerxo AI', 'Chrome', '120.0'],
-    markOnlineOnConnect: false,
-    generateHighQualityLinkPreview: false,
-  });
+  let state, saveCreds;
+  try {
+    const authState = await useMultiFileAuthState(sessionDir);
+    state = authState.state;
+    saveCreds = authState.saveCreds;
+    logger.info(`[${sessionId}] Auth state loaded`);
+  } catch (err) {
+    logger.error(`[${sessionId}] Failed to load auth state: ${err.message}`);
+    throw err;
+  }
+
+  let sock;
+  try {
+    sock = makeWASocket({
+      logger: pino({ level: 'warn' }),
+      auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'warn' })),
+      },
+      printQRInTerminal: true,
+      browser: ['Xerxo AI', 'Chrome', '120.0'],
+      markOnlineOnConnect: false,
+      generateHighQualityLinkPreview: false,
+    });
+    logger.info(`[${sessionId}] WASocket created successfully`);
+  } catch (err) {
+    logger.error(`[${sessionId}] Failed to create WASocket: ${err.message}`);
+    throw err;
+  }
 
   const sessionData = {
     sessionId,
@@ -95,6 +111,7 @@ async function createSession(sessionId, type) {
 
   // ─── Handle connection updates ───
   sock.ev.on('connection.update', async (update) => {
+    logger.info(`[${sessionId}] connection.update: ${JSON.stringify(update).substring(0, 500)}`);
     const { connection, lastDisconnect, qr } = update;
     const session = sessions.get(sessionId);
     if (!session) return;

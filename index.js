@@ -1,5 +1,4 @@
 
-FILE 2: index.js
 
 const express = require('express');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');

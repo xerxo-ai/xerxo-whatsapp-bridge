@@ -478,4 +478,3 @@ app.listen(PORT, async () => {
 
   logger.info(`[keepalive] Self-ping interval: ${SELF_PING_INTERVAL / 1000}s, WA keepalive: ${WA_KEEPALIVE_INTERVAL / 1000}s`);
 });
-

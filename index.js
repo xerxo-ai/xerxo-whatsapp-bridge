@@ -166,8 +166,9 @@ async function createSession(sessionId, type) {
       logger.info(`[${sessionId}] Connection closed (code: ${statusCode}), reconnect: ${shouldReconnect}`);
 
       if (shouldReconnect) {
-        // Reconnect
-        setTimeout(() => createSession(sessionId, session.type), 3000);
+        // Fast reconnect for server errors (503), slower for others
+        const delay = statusCode === 503 ? 1500 : 3000;
+        setTimeout(() => createSession(sessionId, session.type), delay);
       } else {
         session.status = 'disconnected';
         session.phoneNumber = null;
@@ -444,4 +445,37 @@ app.listen(PORT, async () => {
 
   // Restore existing sessions
   await restoreSessions();
+
+  // ─── Keep-alive: Prevent Render from hibernating ───
+  // Self-ping every 4 minutes to keep the service active
+  const SELF_PING_INTERVAL = 4 * 60 * 1000; // 4 minutes
+  setInterval(async () => {
+    try {
+      const resp = await fetch(`http://localhost:${PORT}/health`);
+      const data = await resp.json();
+      logger.info(`[keepalive] Self-ping OK — sessions: ${data.activeSessions}, uptime: ${Math.floor(data.uptime)}s`);
+    } catch (err) {
+      logger.warn(`[keepalive] Self-ping failed: ${err.message}`);
+    }
+  }, SELF_PING_INTERVAL);
+
+  // ─── WhatsApp presence keep-alive ───
+  // Send "available" presence every 3 minutes to keep WA WebSocket alive
+  const WA_KEEPALIVE_INTERVAL = 3 * 60 * 1000; // 3 minutes
+  setInterval(async () => {
+    for (const [sessionId, session] of sessions) {
+      if (session.status === 'connected' && session.sock) {
+        try {
+          await session.sock.sendPresenceUpdate('available');
+          session.lastActivity = new Date().toISOString();
+          logger.info(`[${sessionId}] WA keepalive sent`);
+        } catch (err) {
+          logger.warn(`[${sessionId}] WA keepalive failed: ${err.message}`);
+        }
+      }
+    }
+  }, WA_KEEPALIVE_INTERVAL);
+
+  logger.info(`[keepalive] Self-ping interval: ${SELF_PING_INTERVAL / 1000}s, WA keepalive: ${WA_KEEPALIVE_INTERVAL / 1000}s`);
 });
+

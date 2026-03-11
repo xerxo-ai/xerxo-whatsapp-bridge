@@ -20,6 +20,9 @@ const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 // ─── In-memory session store ───
 const sessions = new Map();
 
+// ─── Contact store per session ───
+const sessionContacts = new Map(); // sessionId -> Map(jid -> {name, number, ...})
+
 // ─── Sent message ID tracking (prevent infinite loops) ───
 const sentMessageIds = new Set();
 
@@ -186,6 +189,38 @@ async function createSession(sessionId, type) {
   // ─── Save credentials on update ───
   sock.ev.on('creds.update', saveCreds);
 
+  // ─── Track contacts ───
+  if (!sessionContacts.has(sessionId)) {
+    sessionContacts.set(sessionId, new Map());
+  }
+  const contacts = sessionContacts.get(sessionId);
+
+  sock.ev.on('contacts.upsert', (newContacts) => {
+    for (const c of newContacts) {
+      if (c.id) {
+        const number = c.id.replace(/@.*$/, '').replace(/:.*$/, '');
+        contacts.set(c.id, {
+          jid: c.id,
+          number,
+          name: c.name || c.notify || c.verifiedName || '',
+          notify: c.notify || '',
+          verifiedName: c.verifiedName || '',
+          imgUrl: c.imgUrl || '',
+        });
+      }
+    }
+    logger.info(`[${sessionId}] Contacts updated: ${contacts.size} total`);
+  });
+
+  sock.ev.on('contacts.update', (updates) => {
+    for (const u of updates) {
+      if (u.id && contacts.has(u.id)) {
+        const existing = contacts.get(u.id);
+        contacts.set(u.id, { ...existing, ...u, name: u.name || u.notify || existing.name });
+      }
+    }
+  });
+
   // ─── Handle incoming messages ───
   sock.ev.on('messages.upsert', async ({ messages, type: upsertType }) => {
     const session = sessions.get(sessionId);
@@ -195,6 +230,20 @@ async function createSession(sessionId, type) {
     for (const msg of messages) {
       if (!msg.message) continue;
       if (msg.key.fromMe === undefined) continue;
+
+      // Capture contact info from incoming messages
+      if (msg.pushName && msg.key.remoteJid) {
+        const jid = msg.key.remoteJid;
+        const number = jid.replace(/@.*$/, '').replace(/:.*$/, '');
+        const existing = contacts.get(jid) || {};
+        contacts.set(jid, {
+          ...existing,
+          jid,
+          number,
+          name: existing.name || msg.pushName,
+          notify: msg.pushName,
+        });
+      }
 
       // Skip messages we sent ourselves (agent responses)
       if (msg.key.id && sentMessageIds.has(msg.key.id)) {
@@ -383,6 +432,38 @@ app.get('/session/:sessionId/qr', (req, res) => {
   });
 });
 
+// Get all contacts for a session
+app.get('/session/:sessionId/contacts', (req, res) => {
+  const contacts = sessionContacts.get(req.params.sessionId);
+  if (!contacts) {
+    return res.json({ success: true, contacts: [] });
+  }
+  const list = Array.from(contacts.values()).filter(c => c.name && !c.jid.endsWith('@g.us'));
+  res.json({ success: true, contacts: list, total: list.length });
+});
+
+// Search contacts by name
+app.get('/session/:sessionId/contacts/search', (req, res) => {
+  const query = (req.query.name || req.query.q || '').toLowerCase().trim();
+  if (!query) {
+    return res.status(400).json({ success: false, error: 'name or q query param required' });
+  }
+  const contacts = sessionContacts.get(req.params.sessionId);
+  if (!contacts) {
+    return res.json({ success: true, matches: [], query });
+  }
+  const matches = [];
+  for (const c of contacts.values()) {
+    // Skip group chats
+    if (c.jid.endsWith('@g.us')) continue;
+    const searchable = `${c.name} ${c.notify} ${c.verifiedName} ${c.number}`.toLowerCase();
+    if (searchable.includes(query)) {
+      matches.push(c);
+    }
+  }
+  res.json({ success: true, matches, query, total: matches.length });
+});
+
 // Send a message
 app.post('/session/:sessionId/send', async (req, res) => {
   const session = sessions.get(req.params.sessionId);
@@ -487,3 +568,4 @@ app.listen(PORT, async () => {
 
   logger.info(`[keepalive] External URL: ${EXTERNAL_URL}, ping interval: ${SELF_PING_INTERVAL / 1000}s, WA keepalive: ${WA_KEEPALIVE_INTERVAL / 1000}s`);
 });
+

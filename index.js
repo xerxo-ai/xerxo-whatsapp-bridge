@@ -447,15 +447,24 @@ app.listen(PORT, async () => {
   await restoreSessions();
 
   // ─── Keep-alive: Prevent Render from hibernating ───
-  // Self-ping every 4 minutes to keep the service active
+  // Use the external URL (Render provides RENDER_EXTERNAL_URL) so the ping
+  // counts as real external traffic. Localhost pings do NOT prevent hibernation.
+  const EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
   const SELF_PING_INTERVAL = 4 * 60 * 1000; // 4 minutes
   setInterval(async () => {
     try {
-      const resp = await fetch(`http://localhost:${PORT}/health`);
+      const resp = await fetch(`${EXTERNAL_URL}/health`);
       const data = await resp.json();
-      logger.info(`[keepalive] Self-ping OK — sessions: ${data.activeSessions}, uptime: ${Math.floor(data.uptime)}s`);
+      logger.info(`[keepalive] External ping OK (${EXTERNAL_URL}) — sessions: ${data.activeSessions}, uptime: ${Math.floor(data.uptime)}s`);
     } catch (err) {
-      logger.warn(`[keepalive] Self-ping failed: ${err.message}`);
+      logger.warn(`[keepalive] External ping failed (${EXTERNAL_URL}): ${err.message}`);
+      // Fallback to localhost if external fails
+      try {
+        await fetch(`http://localhost:${PORT}/health`);
+        logger.info(`[keepalive] Localhost fallback ping OK`);
+      } catch (e2) {
+        logger.warn(`[keepalive] Localhost fallback also failed: ${e2.message}`);
+      }
     }
   }, SELF_PING_INTERVAL);
 
@@ -476,5 +485,5 @@ app.listen(PORT, async () => {
     }
   }, WA_KEEPALIVE_INTERVAL);
 
-  logger.info(`[keepalive] Self-ping interval: ${SELF_PING_INTERVAL / 1000}s, WA keepalive: ${WA_KEEPALIVE_INTERVAL / 1000}s`);
+  logger.info(`[keepalive] External URL: ${EXTERNAL_URL}, ping interval: ${SELF_PING_INTERVAL / 1000}s, WA keepalive: ${WA_KEEPALIVE_INTERVAL / 1000}s`);
 });
